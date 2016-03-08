@@ -7,13 +7,16 @@ import logging
 import time
 import json
 
-DRIVES_PREFIX = "ata-ST4000NM0033-9ZM170_S1Z0"
+# Original SATA interface ones
+# DRIVES_PREFIX = "ata-ST4000NM0033-9ZM170_S1Z0"
+
+# SAS 6TB
+DRIVES_PREFIX = "scsi-35000c50084"
 
 lgr = logging.getLogger("datalad.benchmarking")
 
 run = Runner()
 dryrun = Runner()
-
 
 def get_drives(prefix, even=True):
     """Return letters for corresponding drives"""
@@ -61,6 +64,7 @@ def get_dasho(options):
 
 def wipe_drives(drives):
     lgr.info("Wiping drives %s" % drives)
+    # return  ## TEMP
     for drive in drives:
         lgr.debug("Wiping drive %s" % drive)
         size = get_drive_size(drive)
@@ -169,10 +173,15 @@ class MD(BlockDevice):
     # and use it -- otherwise way too long process!  I know that it wouldn't be
     # exactly fair to ZFS though, so may be should be optional?  would be nice to compare
     # actually
-    def __init__(self, drives, layout="raid6", recreate=False):
+    def __init__(self, drives, layout="raid6", mddev='md99', recreate=False):
         self.layout = layout
         self.drives = drives
         self.recreate = recreate
+        self.mddev = mddev
+
+    @property
+    def mdpath(self):
+        return "/dev/%s" % self.mddev
 
     def __str__(self):
         return "MD_%s" % self.layout
@@ -181,16 +190,17 @@ class MD(BlockDevice):
         if not self.recreate:
             # if exists -- we just skip
             try:
-                _ = run("grep '^md10 ' /proc/mdstat")
-                lgr.info("md10 exists -- skipping lengthy recreation")
-                return "/dev/md10"
+                _ = run("grep '^%s ' /proc/mdstat" % self.mddev)
+                lgr.info("%s exists -- skipping lengthy recreation" % self.mddev)
+                return self.mdpath
             except:
                 pass
 
         self.kill()
         drives = self.drives
-        dryrun(["mdadm", "--create", "--verbose", "/dev/md10",
-                "--level=6", "--raid-devices=%d" % len(drives)]
+        dryrun(["mdadm", "--create", "--verbose", self.mdpath,
+                "--level=%d" % ({'raid5': 5, 'raid6': 6}[self.layout]),
+                "--raid-devices=%d" % len(drives)]
                 + drives, cwd="/dev")
         lgr.info("Now we will wait until it finishes generating the bloody RAID")
         while True:
@@ -200,16 +210,16 @@ class MD(BlockDevice):
                     #print '.',
                     continue
                 break
-        return "/dev/md10"
+        return self.mdpath
 
     def kill(self):
         try:
-            _ = run("grep '^md10 ' /proc/mdstat")
+            _ = run("grep '^%s ' /proc/mdstat" % self.mddev)
             try:
-                _ = run("umount /dev/md10")
+                _ = run("umount %s" % self.mdpath)
             except:
                 pass
-            dryrun("mdadm --stop /dev/md10")
+            dryrun("mdadm --stop %s" % self.mdpath)
         except:
             pass
         # TODO: abstract drives away so we could kill all the nested things
@@ -353,12 +363,12 @@ def make_test_repo(d, nfiles=100, ndirs=1, git_options=[], annex_options=[]):
     run(["git"] + git_options + ["annex", "init"] + annex_options, cwd=d)
 
     f_ = ndirs * nfiles # absolute count
-    for dir_index in xrange(ndirs):
+    for dir_index in range(ndirs):
         d_ = "d%d" % dir_index
         df_ = os.path.join(d, d_)
         if not os.path.exists(df_):
             os.mkdir(df_)
-        for n in xrange(nfiles):
+        for n in range(nfiles):
             with open(os.path.join(df_, str(f_)), "w") as f:
                 f.write("file%d" % f_)
             f_ -= 1
@@ -391,7 +401,7 @@ class BMRunner(Runner):
             dt_warm = time.time() - time0
         else:
             dt_warm = -10
-        print "%s: %.3g %s" % (name, dt, "%.3g" % dt_warm if dt_warm >= 0 else "")
+        print("%s: %.3g %s" % (name, dt, "%.3g" % dt_warm if dt_warm >= 0 else ""))
         self.protocol.append({
             'command': name,
             'cold': dt,
@@ -444,7 +454,7 @@ def benchmark_fs(fs):
     # make a list of protocols which will be self sufficient dictionaries, so
     # later we could easily load into pandas
     protocols = []
-    for d in xrange(nruns):
+    for d in range(nruns):
         testdir = "test%d" % d
         testpath = os.path.join(fs.mountpoint, testdir)
 
@@ -460,22 +470,9 @@ def benchmark_fs(fs):
     return test_descr, protocols
 
 
-
-def parse_args(args=None):
-    parser = argparse.ArgumentParser(description="A little benchmarker of file systems")
-    parser.add_argument('action', choices=["benchmark", "wipe"], default="benchmark",
-                        help='Action to perform')
-    parser.add_argument('-n', '--dry-run', action='store_true',
-                        help='Perform dry run')
-    parser.add_argument('--assume-created', action='store_true',
-                        help='Assume that FS was created and mounted (e.g. manually outside)')
-
-    # Parse command line options
-    return parser.parse_args(args)
-
-
 def main(action, assume_created=False):
     drives = get_drives(DRIVES_PREFIX)
+    print("Got %d drives: %s" % (len(drives), drives))
     mountpoint = "/mnt/test"
 
     #mdraid_chunksize = 512  # k -- was the ones created by mdadm by default
@@ -544,8 +541,8 @@ tar -xzf test4.tar.gz: 27.6
                                      mountpoint=mountpoint, **FS[1])
                                   for FS in (#(EXT4, {}),
                                              #(BTRFS, {}),
-                                             (BTRFS, {'mount_options': ['compress=lzo',
-                                                                        #'compress=zlib',
+                                             (BTRFS, {'mount_options': [#'compress=lzo',
+                                                                        'compress=zlib',
                                                                         ]}),
                                              #(ReiserFS, {}),
                                              #(XFS, {}),
@@ -559,6 +556,14 @@ tar -xzf test4.tar.gz: 27.6
         fs_btrfs_raid6_drives = [#BTRFS(drives=drives, options=["-m raid6"], mountpoint=mountpoint),
                                  BTRFS(drives=drives, options=["-m raid6"], mount_options=["compress=lzo"], mountpoint=mountpoint),
                                  ]
+        fs_2md_btrfs_sripe_drives = [
+            BTRFS(drives=[MD(drives[:3], mddev='md98', layout='raid5'),
+                          MD(drives[3:6], mddev='md99', layout='raid5')],
+                  options=["-m raid0"],
+                  mount_options=["compress=lzo"],
+                  mountpoint=mountpoint)
+        ]
+
         """
         2015-06-29 09:22:29,001 [ERROR  ] Failed to run 'zpool list testtank' under '.'. Exit code=1 (cmd.py:251)
 Traceback (most recent call last):
@@ -571,7 +576,8 @@ Traceback (most recent call last):
 TypeError: 'list' object is not callable
 """
         for fs in (
-            fs_lvm_md_raid6_drives
+            fs_2md_btrfs_sripe_drives
+            #fs_lvm_md_raid6_drives
             # zfs_raid6_drives
             #TODO: fixup zfs_raid6_drives
             ##  fs_md_raid6_drives + fs_ext4_var_bs +
@@ -589,7 +595,7 @@ TypeError: 'list' object is not callable
             test_descr, protocols = benchmark_fs(fs)
             # TODO: record
             #   - versions of kernel, git, git-annex
-            protocols_fname = '%(test_repo)s-%(fs)s.json' % test_descr # -'.join("%s:%s.json" % (k, test_descr[k]) for k in sorted(test_descr))
+            protocols_fname = '%(test_repo)s-r2_%(fs)s.json' % test_descr # -'.join("%s:%s.json" % (k, test_descr[k]) for k in sorted(test_descr))
             protocols_path = os.path.join('test_fs_protocols', protocols_fname)
             dryrun(save_protocols, protocols, protocols_path)
             dryrun("umount %s" % fs.mountpoint)
@@ -600,6 +606,19 @@ TypeError: 'list' object is not callable
         wipe_drives(drives)
     else:
         raise ValueError(action)
+
+
+def parse_args(args=None):
+    parser = argparse.ArgumentParser(description="A little benchmarker of file systems")
+    parser.add_argument('action', choices=["benchmark", "wipe"], default="benchmark",
+                        help='Action to perform')
+    parser.add_argument('-n', '--dry-run', action='store_true',
+                        help='Perform dry run')
+    parser.add_argument('--assume-created', action='store_true',
+                        help='Assume that FS was created and mounted (e.g. manually outside)')
+
+    # Parse command line options
+    return parser.parse_args(args)
 
 
 if __name__ == "__main__":
