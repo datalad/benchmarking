@@ -11,7 +11,10 @@ import json
 # DRIVES_PREFIX = "ata-ST4000NM0033-9ZM170_S1Z0"
 
 # SAS 6TB
-DRIVES_PREFIX = "scsi-35000c50084"
+# DRIVES_PREFIX = "scsi-35000c50084"
+
+# typhon 14TB SAS -- 12 pieces
+DRIVES_PREFIX = "scsi-35000c500d0"
 
 lgr = logging.getLogger("datalad.benchmarking")
 
