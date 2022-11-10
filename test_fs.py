@@ -14,7 +14,7 @@ import json
 # DRIVES_PREFIX = "scsi-35000c50084"
 
 # typhon 14TB SAS -- 12 pieces
-DRIVES_PREFIX = "scsi-35000c500d0"
+DRIVES_PREFIX = "scsi-35000c500d8"
 
 lgr = logging.getLogger("datalad.benchmarking")
 
@@ -23,8 +23,11 @@ dryrun = Runner()
 
 def get_drives(prefix, even=True):
     """Return letters for corresponding drives"""
-    drives = [d for d in glob.glob('/dev/disk/by-id/%s*' % prefix)
+    prefix_glob= '/dev/disk/by-id/%s*' % prefix
+    drives = [d for d in glob.glob(prefix_glob)
               if not '-part' in d]
+    if not drives:
+        raise ValueError(f"Got no drives for glob {prefix_glob}")
     drives = sorted([
         os.path.realpath(d)[-3:]
         for d in drives
@@ -101,8 +104,8 @@ def get_pairs(entries, prefix="mirror"):
         out.append(e)
     return out
 
-from nose.tools import eq_
 def test_get_pairs():
+    from nose.tools import eq_
     eq_(get_pairs('ab'), ['mirror', 'a', 'b'])
     eq_(get_pairs('abcd'), ['mirror', 'a', 'b', 'mirror', 'c', 'd'])
 
