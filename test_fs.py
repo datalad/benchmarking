@@ -430,13 +430,14 @@ def run_tests_ondir(testpath, nfiles, ndirs):
         bmrun("cd %s.clone; git annex drop . " % testdir, run_warm=False)
         bmrun("du -scm %s.clone" % testdir)
     if os.path.exists(os.path.join(testpath, ".git/annex/objects")):
-        bmrun("cd %s; git annex direct" % testdir)
+        bmrun("cd %s; git annex unlock" % testdir)
         bmrun("du  -scm " + testdir)
-        bmrun("cd %s; git annex indirect" % testdir)
+        bmrun("cd %s; git annex lock" % testdir)
         bmrun("chmod +w -R %s/.git/annex/objects" % testdir)
     bmrun("rm -rf %s" % testdir, run_warm=False)
     bmrun("rm -rf %s.clone" % testdir, run_warm=False)
     bmrun("tar -xzf %s.tar.gz" % testdir, run_warm=False)
+    bmrun("cd %s; git annex test" % testdir, run_warm=False)
     return bmrun.protocol
 run_tests_ondir.__test__ = False
 
